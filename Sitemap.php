@@ -1,4 +1,5 @@
 <?php
+
 namespace samdark\sitemap;
 
 use XMLWriter;
@@ -76,6 +77,13 @@ class Sitemap
     private $useXhtml = false;
 
     /**
+     *
+     * @var bool if multi-language sitemap should be isolated
+     * Useful for hreflang sitemap to point crawler to alternate language page without duplicating entries in the sitemap.
+     */
+    private $isolateMultiLanguageByLocale = false;
+
+    /**
      * @var array valid values for frequency parameter
      */
     private $validFrequencies = array(
@@ -109,7 +117,7 @@ class Sitemap
      *
      * @throws \InvalidArgumentException
      */
-    public function __construct($filePath, $useXhtml = false)
+    public function __construct($filePath, $useXhtml = false, $isolateMultiLanguageByLocale = false)
     {
         $dir = dirname($filePath);
         if (!is_dir($dir)) {
@@ -120,6 +128,7 @@ class Sitemap
 
         $this->filePath = $filePath;
         $this->useXhtml = $useXhtml;
+        $this->isolateMultiLanguageByLocale = $isolateMultiLanguageByLocale;
     }
 
     /**
@@ -130,7 +139,7 @@ class Sitemap
     {
         return $this->writtenFilePaths;
     }
-    
+
     /**
      * Creates new file
      * @throws \RuntimeException if file is not writeable
@@ -166,7 +175,7 @@ class Sitemap
         // Use XML stylesheet, if available
         if (isset($this->stylesheet)) {
             $this->writer->writePi('xml-stylesheet', "type=\"text/xsl\" href=\"" . $this->stylesheet . "\"");
-            $this->writer->writeRaw("\n");            
+            $this->writer->writeRaw("\n");
         }
         $this->writer->setIndent($this->useIndent);
         $this->writer->startElement('urlset');
@@ -256,14 +265,15 @@ class Sitemap
      * @param string $location
      * @throws \InvalidArgumentException
      */
-    protected function validateLocation($location) {
+    protected function validateLocation($location)
+    {
         if (false === filter_var($location, FILTER_VALIDATE_URL)) {
             throw new \InvalidArgumentException(
                 "The location must be a valid URL. You have specified: {$location}."
             );
         }
     }
-    
+
     /**
      * Adds a new item to sitemap
      *
@@ -288,7 +298,11 @@ class Sitemap
         }
 
         if (is_array($location)) {
-            $this->addMultiLanguageItem($location, $lastModified, $changeFrequency, $priority);
+            if ($this->isolateMultiLanguageByLocale) {
+                $this->addIsolatedMultiLanguageItem($location, $lastModified, $changeFrequency, $priority);
+            } else {
+                $this->addMultiLanguageItem($location, $lastModified, $changeFrequency, $priority);
+            }
         } else {
             $this->addSingleLanguageItem($location, $lastModified, $changeFrequency, $priority);
         }
@@ -330,8 +344,8 @@ class Sitemap
             if (!in_array($changeFrequency, $this->validFrequencies, true)) {
                 throw new \InvalidArgumentException(
                     'Please specify valid changeFrequency. Valid values are: '
-                    . implode(', ', $this->validFrequencies)
-                    . "You have specified: {$changeFrequency}."
+                        . implode(', ', $this->validFrequencies)
+                        . "You have specified: {$changeFrequency}."
                 );
             }
 
@@ -351,9 +365,9 @@ class Sitemap
     }
 
     /**
-     * Adds a multi-language item, based on multiple locations with alternate hrefs to sitemap
+     * Adds an isolated multi-language item, based on multiple locations with alternate hrefs to sitemap
      *
-     * @param array $locations array of language => link pairs
+     * @param array $locations array of language => link pairs, first entry has to be the leading language
      * @param integer $lastModified last modification timestamp
      * @param float $changeFrequency change frequency. Use one of self:: constants here
      * @param string $priority item's priority (0.0-1.0). Default null is equal to 0.5
@@ -362,6 +376,7 @@ class Sitemap
      *
      * @see addItem
      */
+
     private function addMultiLanguageItem($locations, $lastModified, $changeFrequency, $priority)
     {
         foreach ($locations as $language => $url) {
@@ -379,8 +394,8 @@ class Sitemap
                 if (!in_array($changeFrequency, $this->validFrequencies, true)) {
                     throw new \InvalidArgumentException(
                         'Please specify valid changeFrequency. Valid values are: '
-                        . implode(', ', $this->validFrequencies)
-                        . "You have specified: {$changeFrequency}."
+                            . implode(', ', $this->validFrequencies)
+                            . "You have specified: {$changeFrequency}."
                     );
                 }
 
@@ -415,6 +430,72 @@ class Sitemap
 
             $this->writer->endElement();
         }
+    }
+    /**
+     * Adds a multi-language item, based on multiple locations with alternate hrefs to sitemap
+     *
+     * @param array $locations array of language => link pairs
+     * @param integer $lastModified last modification timestamp
+     * @param float $changeFrequency change frequency. Use one of self:: constants here
+     * @param string $priority item's priority (0.0-1.0). Default null is equal to 0.5
+     *
+     * @throws \InvalidArgumentException
+     *
+     * @see addItem
+     */
+    private function addIsolatedMultiLanguageItem($locations, $lastModified, $changeFrequency, $priority)
+    {
+        $mainLocation = $locations[$this->isolateMultiLanguageByLocale];
+
+        $this->validateLocation($mainLocation);
+
+        $this->writer->startElement('url');
+
+        $this->writer->writeElement('loc', $mainLocation);
+
+        if ($lastModified !== null) {
+            $this->writer->writeElement('lastmod', date('c', $lastModified));
+        }
+
+        if ($changeFrequency !== null) {
+            if (!in_array($changeFrequency, $this->validFrequencies, true)) {
+                throw new \InvalidArgumentException(
+                    'Please specify valid changeFrequency. Valid values are: '
+                        . implode(', ', $this->validFrequencies)
+                        . "You have specified: {$changeFrequency}."
+                );
+            }
+
+            $this->writer->writeElement('changefreq', $changeFrequency);
+        }
+
+        if ($priority !== null) {
+            if (!is_numeric($priority) || $priority < 0 || $priority > 1) {
+                throw new \InvalidArgumentException(
+                    "Please specify valid priority. Valid values range from 0.0 to 1.0. You have specified: {$priority}."
+                );
+            }
+            $this->writer->writeElement('priority', number_format($priority, 1, '.', ','));
+        }
+
+        foreach ($locations as $hreflang => $href) {
+            $this->validateLocation($href);
+            $this->writer->startElement('xhtml:link');
+            $this->writer->startAttribute('rel');
+            $this->writer->text('alternate');
+            $this->writer->endAttribute();
+
+            $this->writer->startAttribute('hreflang');
+            $this->writer->text($hreflang);
+            $this->writer->endAttribute();
+
+            $this->writer->startAttribute('href');
+            $this->writer->text($href);
+            $this->writer->endAttribute();
+            $this->writer->endElement();
+        }
+
+        $this->writer->endElement();
     }
 
 
